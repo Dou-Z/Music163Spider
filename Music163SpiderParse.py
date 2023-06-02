@@ -8,15 +8,16 @@ import pandas as pd
 import pymysql
 import requests
 from bs4 import BeautifulSoup
-
+from requests.packages import urllib3
+urllib3.disable_warnings()
 
 class Music163_Spider():
 
     def __init__(self):
         self.connection = pymysql.connect(host='localhost',
-                                     user='xxx',
+                                     user='root',
                                      password='123456',
-                                     db='spider_datas',
+                                     db='py_datas',
                                      charset='utf8mb4',
                                      cursorclass=pymysql.cursors.DictCursor)
 
@@ -26,18 +27,27 @@ class Music163_Spider():
         self.headers = {
 
             'Connection': 'keep-alive',
+
             'Referer': 'https://music.163.com/',
+
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.143 Safari/537.36'
         }
+        self.create_folder('.\music_data')
 
     def CreateUUid(self):
         my_uuid = uuid.uuid1()
         id = builtins.str(my_uuid)
         return id
 
+    def create_folder(self,folder_path):
+        """
+        如果文件夹不存在，则创建文件夹
+        """
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+
     def get_data_of_music_tag(self):
         """获取歌单索引页的信息"""
-
 
         print("正在获取歌单标签索引页的信息...")
 
@@ -61,7 +71,7 @@ class Music163_Spider():
             time.sleep(2)
 
             url = f'https://music.163.com/discover/playlist/?cat={item}&order=hot&limit=35'
-            response = requests.get(url=url, headers=self.headers)
+            response = requests.get(url=url, headers=self.headers, verify=False)
             html = response.text
             soup = BeautifulSoup(html, 'html.parser')
 
@@ -76,24 +86,23 @@ class Music163_Spider():
                 url = ids[j]['href']
 
                 # 输出歌单索引页信息
-                # print('\r',tag, url, end='', flush=True)
+                print('\r',tag, url, end='', flush=True)
                 id = self.CreateUUid()
                 # 将索引页写入CSV文件中
                 with open('music_data/album_list.csv', 'a+', encoding='utf-8-sig') as f:
                     f.write(id + ',' + tag + ',' + url + '\n')
+                if j > 8:
+                    break
+            # 插入数据库
 
-                # 插入数据库
-                # 写入数据库
-                # print(item)
             ms.insert_tag(self.CreateUUid(),item)
 
-        print("\n 已获取歌单索引页的信息，保存至 music_data/album_list.csv")
+        print("\n 已获取歌单标签页的信息，保存至 music_data/album_list.csv")
 
-        # print("\n已获取歌单索引页的信息，保存至 music_data/music_list.csv")
 
     def get_data_of_ablum_detail(self):
         """获取歌单详情页的信息"""
-        df = pd.read_csv('./music_data/album_list.csv', header=None, names=['id','tag','url','z','g'])
+        df = pd.read_csv('./music_data/album_list.csv', header=None, names=['id','tag','url','nan1','nan2'])
 
         print("正在获取专辑详情页的信息...")
 
@@ -116,7 +125,7 @@ class Music163_Spider():
             time.sleep(1)
 
             url = 'https://music.163.com' + df['url'][i]
-            response = requests.get(url=url, headers=self.headers)
+            response = requests.get(url=url, headers=self.headers, verify=False)
             html = response.text
             soup = BeautifulSoup(html, 'html.parser')
             print('\n', url)
@@ -131,7 +140,7 @@ class Music163_Spider():
             # 获取标签
             tag = df['tag'][i]
             tag_id = df['id'][i]
-            print(tag_id)
+
 
             # 获取歌单介绍
             if soup.select('#album-desc-more'):
@@ -174,20 +183,22 @@ class Music163_Spider():
                 #aut = autuor_li[j * 2].get_text()
                 aut=''
                 pt = 1
-                if type(pt) != 'int':
-                    pt=1
-                else:
-                    pt = playtime_li[j].get_text()
-                print('\n tagid,title,piaytime,autuor,src \n' ,tag_id, li[j].get_text(), pt, aut, li[j]['href'] ,end='', flush=True)
+                # print('\n tagid,title,piaytime,autuor,src \n' ,tag_id, li[j].get_text(), pt, aut, li[j]['href'] ,end='', flush=True)
                 self.get_data_of_music_detail(tag_id, li[j].get_text(), pt, aut, li[j]['href'])
 
             print("\n已获取专辑详情页的信息，本地保存至 music_data/music_album.csv")
+            # break
 
     def get_data_of_music_detail(self, tag, title, playtime, autuor, music_src):
 
-        print("\n正在获取歌曲详情页的信息...")
+        print(f"\n正在获取 = {music_src} = 歌曲详情页的信息...")
         url = 'https://music.163.com' + music_src
-        response = requests.get(url=url, headers=self.headers)
+        try:
+            response = requests.get(url=url, headers=self.headers, verify=False)
+        except Exception as e:
+            # print(response.status_code)
+            print(music_src,'ERROR:',e)
+            return 0
         html = response.text
         soup = BeautifulSoup(html, 'html.parser')
 
@@ -197,28 +208,22 @@ class Music163_Spider():
         lyric=str(lyric)
 
         composer = 'None'
-        try:
-            composer = re.findall(r'曲：(.*)', lyric)[0]
-        except Exception as e:
-            # 打印错误日志
-            print('internal error : ', str(e))
-            time.sleep(2)
-
-        # 查询MySQL数据
-        # tag_id = MusicToSql.Search_date(tag,'tag')
 
         # 评论量 cnt_comment_count
         cnt_comment = soup.select('#cnt_comment_count')[0].get_text()
         # 图像
         pic_src = soup.select('.u-cover img')[0]['src']
         # 输出歌单详情页信息
-        print('\r', title, playtime, autuor, music_src, composer, lyric, tag, cnt_comment, pic_src, end='', flush=True)
+        # print('\r', title, playtime, autuor, music_src, composer, lyric, tag, cnt_comment, pic_src, end='', flush=True)
 
         with open('./music_data/music_detail.csv', 'a+', encoding='utf-8-sig') as f:
-            f.write(title + ',' + str(playtime) + ',' + autuor + ',' + '' + ',' + music_src + ',' + title + ',' + composer +',' + lyric + ',' + tag + ',' + cnt_comment + ',' + pic_src + '\n')
+            f.write(music_src+','+title + ',' + str(playtime) + ',' + autuor + ',' + '' + ',' + music_src + ',' + title + ',' + composer +',' + lyric + ',' + tag + ',' + cnt_comment + ',' + pic_src + '\n')
         cnt_comment = random.randint(100,5000)
         # 写入数据库
         ms.insert_music(self.CreateUUid(),title,playtime,autuor,0,music_src,title,composer,lyric,tag,cnt_comment,pic_src)
+
+
+
     def del_csv(self):
         try:
             os.remove('./music_data/music_detail.csv')
@@ -289,4 +294,6 @@ if __name__ == '__main__':
     wy.del_csv()
     wy.get_data_of_music_tag()
     wy.get_data_of_ablum_detail()
+    ms.dis_connect()
+    print('DONE！！！')
 
